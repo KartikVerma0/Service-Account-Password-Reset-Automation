@@ -7,6 +7,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import mysql.connector
 
 # Set up logging
 logging.basicConfig(
@@ -38,6 +39,33 @@ class M365PasswordExpiryChecker:
         self.graph_endpoint = "https://graph.microsoft.com/v1.0"
         self.expiry_days = expiry_days
         self.warn_days = warn_days
+        self._init_db()
+    
+    def _init_db(self):
+        conn = self.connect_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS accounts (
+                user VARCHAR(255) PRIMARY KEY,
+                last_password_change DATE
+            )
+        ''')
+        conn.commit()
+        cursor.close()
+        conn.close()
+    
+    def connect_db(self):
+        try:
+            return mysql.connector.connect(
+                host=os.getenv("DB_HOST"),
+                port=int(os.getenv("DB_PORT", 3306)),
+                user=os.getenv("DB_USER"),
+                password=os.getenv("DB_PASSWORD"),
+                database=os.getenv("DB_NAME")
+            )
+        except mysql.connector.Error as err:
+            logger.error(f"Error connecting to database: {err}")
+            sys.exit(1)
     
     def authenticate(self):
         """Get OAuth access token for Microsoft Graph API"""
@@ -157,89 +185,74 @@ class M365PasswordExpiryChecker:
             logger.error(f"Error resetting password: {str(e)}")
             return False, None
     
-    def check_accounts_for_expiry(self, accounts_file, output_file):
+    def check_accounts_for_expiry(self):
         """
-        Check accounts in the file for password expiry and reset if needed
-        
-        Args:
-            accounts_file (str): Path to file containing account data
-            output_file (str): Path to file where updated account data will be saved
-        
+        Check user accounts in the MySQL DB for password expiry and reset if needed.
+
         Returns:
             dict: Results of password resets
         """
         today = datetime.now().date()
         expiry_threshold = today + timedelta(days=self.warn_days)
         results = {}
-        
-        updated_accounts = []
-        
+
         try:
-            # Read accounts file
-            with open(accounts_file, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        updated_accounts.append(line)
-                        continue
+            conn = self.connect_db()
+            cursor = conn.cursor(dictionary=True)
+
+            # Fetch all accounts
+            cursor.execute("SELECT user, last_password_change FROM accounts")
+            accounts = cursor.fetchall()
+
+            for account in accounts:
+                user = account["user"]
+                last_change = account["last_password_change"]
+
+                if not last_change:
+                    logger.warning(f"No password change date for user {user}. Skipping.")
+                    continue
+
+                expiry_date = last_change + timedelta(days=self.expiry_days)
+
+                if expiry_date <= expiry_threshold:
+                    logger.info(f"User {user} password expires on {expiry_date} (threshold: {expiry_threshold})")
                     
-                    parts = line.split(',')
-                    if len(parts) < 2:
-                        logger.warning(f"Invalid line in accounts file: {line}")
-                        updated_accounts.append(line)
-                        continue
-                    
-                    user = parts[0].strip()
-                    try:
-                        last_password_change = datetime.strptime(parts[1].strip(), '%Y-%m-%d').date()
-                    except ValueError:
-                        logger.error(f"Invalid date format for user {user}: {parts[1]}")
-                        updated_accounts.append(line)
-                        continue
-                    
-                    # Calculate password expiry date
-                    expiry_date = last_password_change + timedelta(days=self.expiry_days)
-                    
-                    # Check if password is about to expire
-                    if expiry_date <= expiry_threshold:
-                        logger.info(f"User {user} password expires on {expiry_date} (threshold: {expiry_threshold})")
-                        
-                        # Reset password
-                        success, new_password = self.reset_password(user, force_change=self.force_change)
-                        
-                        if success:
-                            # Update the last password change date
-                            results[user] = {
-                                "success": True, 
-                                "new_password": new_password,
-                                "old_expiry": expiry_date,
-                                "new_expiry": today + timedelta(days=self.expiry_days)
-                            }
-                            # Update the line with new date
-                            updated_accounts.append(f"{user},{today.strftime('%Y-%m-%d')}")
-                        else:
-                            results[user] = {
-                                "success": False, 
-                                "error": "Password reset failed",
-                                "expiry": expiry_date
-                            }
-                            updated_accounts.append(line)
+                    # Reset password
+                    success, new_password = self.reset_password(user, force_change=self.force_change)
+
+                    if success:
+                        # Update password change date in DB
+                        cursor.execute(
+                            "UPDATE accounts SET last_password_change = %s WHERE user = %s",
+                            (today.strftime('%Y-%m-%d'), user)
+                        )
+
+                        results[user] = {
+                            "success": True,
+                            "new_password": new_password,
+                            "old_expiry": expiry_date,
+                            "new_expiry": today + timedelta(days=self.expiry_days)
+                        }
                     else:
-                        # No need to update, password not expiring soon
-                        days_to_expiry = (expiry_date - today).days
-                        logger.info(f"User {user} password is valid for {days_to_expiry} more days")
-                        updated_accounts.append(line)
-                
-            # Write updated accounts back to file
-            with open(output_file, 'w') as f:
-                for line in updated_accounts:
-                    f.write(f"{line}\n")
-            
-            return results
-            
+                        results[user] = {
+                            "success": False,
+                            "error": "Password reset failed",
+                            "expiry": expiry_date
+                        }
+                else:
+                    days_left = (expiry_date - today).days
+                    logger.info(f"User {user} password is valid for {days_left} more days")
+
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except mysql.connector.Error as err:
+            logger.error(f"MySQL Error: {err}")
         except Exception as e:
-            logger.error(f"Error processing accounts file: {str(e)}")
-            return {}
+            logger.error(f"Unexpected error: {str(e)}")
+
+        return results
+
 
 def main():
     # Load environment variables from .env file
@@ -249,19 +262,22 @@ def main():
     tenant_id = os.getenv('TENANT_ID')
     client_id = os.getenv('CLIENT_ID')
     client_secret = os.getenv('CLIENT_SECRET')
-    accounts_file = os.getenv('ACCOUNTS_FILE')
+    db_host = os.getenv('DB_HOST')
+    db_port = os.getenv('DB_PORT')
+    db_user = os.getenv('DB_USER')
+    db_password = os.getenv('DB_PASSWORD')
+    db_name = os.getenv('DB_NAME')
     
     # Optional settings with defaults
-    output_file = os.getenv('OUTPUT_FILE', accounts_file)  # Default to same as accounts file
-    expiry_days = int(os.getenv('EXPIRY_DAYS', '1'))
+    expiry_days = int(os.getenv('EXPIRY_DAYS', '90'))
     warn_days = int(os.getenv('WARN_DAYS', '1'))
     force_change = os.getenv('FORCE_CHANGE', 'false').lower() == 'true'
     results_file = os.getenv('RESULTS_FILE')
     
     # Validate required settings
-    if not all([tenant_id, client_id, client_secret, accounts_file]):
+    if not all([tenant_id, client_id, client_secret, db_host, db_port, db_user, db_password, db_name]):
         logger.error("Missing required environment variables. Please check your .env file.")
-        logger.error("Required variables: TENANT_ID, CLIENT_ID, CLIENT_SECRET, ACCOUNTS_FILE")
+        logger.error("Required variables: TENANT_ID, CLIENT_ID, CLIENT_SECRET, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME")
         sys.exit(1)
     
     # Initialize password checker
@@ -282,8 +298,8 @@ def main():
         sys.exit(1)
     
     # Check accounts and reset passwords as needed
-    logger.info(f"Checking password expiry for accounts in {accounts_file}")
-    results = checker.check_accounts_for_expiry(accounts_file, output_file)
+    logger.info(f"Checking password expiry for accounts in Database {db_name}...")
+    results = checker.check_accounts_for_expiry()
     
     # Output results
     reset_count = sum(1 for r in results.values() if r.get("success"))
