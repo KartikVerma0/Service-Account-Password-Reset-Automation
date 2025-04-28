@@ -1,0 +1,4 @@
+python-dotenv
+mysql-connector-python
+cryptography
+requests
