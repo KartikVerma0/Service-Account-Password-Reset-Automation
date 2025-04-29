@@ -1,21 +1,11 @@
+from pathlib import Path
 import sys
-import logging
 import os
 from dotenv import load_dotenv
 import mysql.connector
 from cryptography.fernet import Fernet
+from logger import logger
 
-load_dotenv()
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
 
 class GetStoredPassword:
     def __init__(self):
@@ -24,7 +14,7 @@ class GetStoredPassword:
 
     def _get_or_create_crypto_key(self):
         """Get or create a key for password encryption"""
-        key_file = os.getenv("CRYPTO_KEY_FILE", ".crypto.key")
+        key_file = Path(os.getenv("CRYPTO_KEY_FILE", ".crypto.key")).resolve()
         
         if os.path.exists(key_file):
             with open(key_file, "rb") as f:
@@ -82,8 +72,7 @@ class GetStoredPassword:
     def decrypt_password(self, encrypted):
         """Decrypt a password"""
         return self.cipher.decrypt(encrypted.encode()).decode()
-
-    def export_all_passwords(self, output_file="passwords_output.txt"):
+    def export_all_passwords(self, output_file):
         """
         Retrieve all passwords from the database, decrypt them, and store them in an output file.
         
@@ -113,11 +102,13 @@ class GetStoredPassword:
             logger.error(f"Error exporting passwords: {str(e)}")
             
 def main():
+    load_dotenv()
     # username = input("Enter username: ")
     # logger.info(GetStoredPassword().get_stored_password(username))
     
     # Uncomment the following line to export all passwords to a file
-    GetStoredPassword().export_all_passwords()
+    output_file = Path(os.getenv("PWD_OUTPUT_FILE_PATH","output/passwords_output.txt")).resolve()
+    GetStoredPassword().export_all_passwords(output_file)
             
 if __name__ == "__main__":
     main()
