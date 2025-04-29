@@ -1,9 +1,9 @@
 import json
 import sys
-from logger import logger
+from utils.logger import logger
 import os
 from dotenv import load_dotenv
-from M365PasswordExpiryChecker import M365PasswordExpiryChecker
+from src.M365PasswordExpiryChecker import M365PasswordExpiryChecker
 
 
 
