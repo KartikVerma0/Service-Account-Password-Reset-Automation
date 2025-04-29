@@ -1,4 +1,4 @@
-from logger import logger
+from utils.logger import logger
 import requests
 import json
 import random
