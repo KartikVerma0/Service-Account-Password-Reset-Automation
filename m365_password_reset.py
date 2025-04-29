@@ -8,6 +8,7 @@ import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import mysql.connector
+from cryptography.fernet import Fernet
 
 # Set up logging
 logging.basicConfig(
@@ -39,7 +40,30 @@ class M365PasswordExpiryChecker:
         self.graph_endpoint = "https://graph.microsoft.com/v1.0"
         self.expiry_days = expiry_days
         self.warn_days = warn_days
+        self.crypto_key = self._get_or_create_crypto_key()
+        self.cipher = Fernet(self.crypto_key)
         self._init_db()
+    
+    def _get_or_create_crypto_key(self):
+        """Get or create a key for password encryption"""
+        key_file = os.getenv("CRYPTO_KEY_FILE", ".crypto.key")
+        
+        if os.path.exists(key_file):
+            with open(key_file, "rb") as f:
+                return f.read()
+        else:
+            # Generate a new key
+            key = Fernet.generate_key()
+            # Save it to file with restricted permissions
+            with open(key_file, "wb") as f:
+                f.write(key)
+            os.chmod(key_file, 0o600)  # Only owner can read/write
+            logger.info(f"Created new encryption key in {key_file}")
+            return key
+    
+    def encrypt_password(self, password):
+        """Encrypt a password"""
+        return self.cipher.encrypt(password.encode()).decode()
     
     def _init_db(self):
         conn = self.connect_db()
@@ -47,7 +71,8 @@ class M365PasswordExpiryChecker:
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS accounts (
                 user VARCHAR(255) PRIMARY KEY,
-                last_password_change DATE
+                last_password_change DATE,
+                password_encrypted TEXT
             )
         ''')
         conn.commit()
@@ -176,6 +201,8 @@ class M365PasswordExpiryChecker:
             
             if response.status_code in (200, 204):
                 logger.info(f"Password reset successful for user: {user_id}")
+                # Store encrypted password in database
+                self.store_password(user_id, temp_password)
                 return True, temp_password
             else:
                 logger.error(f"Password reset failed for user: {user_id}. Status code: {response.status_code}")
@@ -184,6 +211,46 @@ class M365PasswordExpiryChecker:
         except requests.exceptions.RequestException as e:
             logger.error(f"Error resetting password: {str(e)}")
             return False, None
+    
+    def store_password(self, user_id, password):
+        """
+        Store encrypted password in database
+        
+        Args:
+            user_id (str): User ID or principal name
+            password (str): Plain-text password to encrypt and store
+        """
+        try:
+            encrypted_password = self.encrypt_password(password)
+            conn = self.connect_db()
+            cursor = conn.cursor()
+            
+            # Check if user exists in database
+            cursor.execute("SELECT COUNT(*) FROM accounts WHERE user = %s", (user_id,))
+            count = cursor.fetchone()[0]
+            
+            if count > 0:
+                # Update existing record
+                cursor.execute(
+                    "UPDATE accounts SET password_encrypted = %s WHERE user = %s",
+                    (encrypted_password, user_id)
+                )
+            else:
+                # Insert new record
+                today = datetime.now().date().strftime('%Y-%m-%d')
+                cursor.execute(
+                    "INSERT INTO accounts (user, last_password_change, password_encrypted) VALUES (%s, %s, %s)",
+                    (user_id, today, encrypted_password)
+                )
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            logger.info(f"Encrypted password stored for user: {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error storing password for user {user_id}: {str(e)}")
+            return False
     
     def check_accounts_for_expiry(self):
         """
@@ -201,7 +268,7 @@ class M365PasswordExpiryChecker:
             cursor = conn.cursor(dictionary=True)
 
             # Fetch all accounts
-            cursor.execute("SELECT user, last_password_change FROM accounts")
+            cursor.execute("SELECT user, last_password_change, password_encrypted FROM accounts")
             accounts = cursor.fetchall()
 
             for account in accounts:
@@ -270,7 +337,7 @@ def main():
     
     # Optional settings with defaults
     expiry_days = int(os.getenv('EXPIRY_DAYS', '90'))
-    warn_days = int(os.getenv('WARN_DAYS', '1'))
+    warn_days = int(os.getenv('WARN_DAYS', '10'))
     force_change = os.getenv('FORCE_CHANGE', 'false').lower() == 'true'
     results_file = os.getenv('RESULTS_FILE')
     
@@ -298,7 +365,7 @@ def main():
         sys.exit(1)
     
     # Check accounts and reset passwords as needed
-    logger.info(f"Checking password expiry for accounts in Database {db_name}...")
+    logger.info(f"Checking password expiry for accounts in Database: {db_name}...")
     results = checker.check_accounts_for_expiry()
     
     # Output results
