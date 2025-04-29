@@ -104,37 +104,7 @@ class M365PasswordExpiryChecker:
         return {
             'Authorization': f'Bearer {self.access_token}',
             'Content-Type': 'application/json'
-        }
-    
-    
-    def get_user(self, identifier):
-        """
-        Get user by email or user principal name
-        
-        Args:
-            identifier (str): Email address or UPN of the user
-        
-        Returns:
-            dict: User object if found, None otherwise
-        """
-        try:
-            response = requests.get(
-                f"{self.graph_endpoint}/users/{identifier}",
-                headers=self.get_headers()
-            )
-            
-            if response.status_code == 200:
-                logger.info(f"Found user: {identifier}")
-                return response.json()
-            else:
-                logger.error(f"User not found: {identifier}. Status code: {response.status_code}")
-                logger.error(f"Response: {response.text}")
-                return None
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error getting user: {str(e)}")
-            return None
-    
-    
+        }    
     
     def check_accounts_for_expiry(self):
         """
