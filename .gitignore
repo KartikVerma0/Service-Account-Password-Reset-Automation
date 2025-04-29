@@ -2,4 +2,4 @@ venv
 .env
 .crypto.key
 passwords_output.txt
-*/__pycache__
+*/**/__pycache__
