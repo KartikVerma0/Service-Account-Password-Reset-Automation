@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import src.db.Connection as db
 
 class M365PasswordExpiryChecker:
-    def __init__(self, tenant_id, client_id, client_secret, expiry_days, warn_days):
+    def __init__(self, tenant_id, client_id, client_secret, expiry_days, warn_days, crypto_key):
         """
         Initialize the Microsoft 365 Password Expiry Checker and Resetter.
         
@@ -30,26 +30,27 @@ class M365PasswordExpiryChecker:
         self.graph_endpoint = "https://graph.microsoft.com/v1.0"
         self.expiry_days = expiry_days
         self.warn_days = warn_days
-        self.crypto_key = self._get_or_create_crypto_key()
+        # self.crypto_key = self._get_or_create_crypto_key()
+        self.crypto_key = crypto_key
         self.cipher = Fernet(self.crypto_key)
         self.connection = db.Connection()
     
-    def _get_or_create_crypto_key(self):
-        """Get or create a key for password encryption"""
-        key_file = os.getenv("CRYPTO_KEY_FILE", ".crypto.key")
+    # def _get_or_create_crypto_key(self):
+    #     """Get or create a key for password encryption"""
+    #     key_file = os.getenv("CRYPTO_KEY_FILE", ".crypto.key")
         
-        if os.path.exists(key_file):
-            with open(key_file, "rb") as f:
-                return f.read()
-        else:
-            # Generate a new key
-            key = Fernet.generate_key()
-            # Save it to file with restricted permissions
-            with open(key_file, "wb") as f:
-                f.write(key)
-            os.chmod(key_file, 0o600)  # Only owner can read/write
-            logger.info(f"Created new encryption key in {key_file}")
-            return key
+    #     if os.path.exists(key_file):
+    #         with open(key_file, "rb") as f:
+    #             return f.read()
+    #     else:
+    #         # Generate a new key
+    #         key = Fernet.generate_key()
+    #         # Save it to file with restricted permissions
+    #         with open(key_file, "wb") as f:
+    #             f.write(key)
+    #         os.chmod(key_file, 0o600)  # Only owner can read/write
+    #         logger.info(f"Created new encryption key in {key_file}")
+    #         return key
     
     def encrypt_password(self, password):
         """Encrypt a password"""

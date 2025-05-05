@@ -20,17 +20,18 @@ def main():
     db_user = os.getenv('DB_USER')
     db_password = os.getenv('DB_PASSWORD')
     db_name = os.getenv('DB_NAME')
+    crypto_key = os.getenv('CRYPTO_KEY')
     
     # Optional settings with defaults
     expiry_days = int(os.getenv('EXPIRY_DAYS', '90'))
-    warn_days = int(os.getenv('WARN_DAYS', '10'))
+    warn_days = int(os.getenv('WARN_DAYS', '7'))
     force_change = os.getenv('FORCE_CHANGE', 'false').lower() == 'true'
     results_file = os.getenv('RESULTS_FILE')
     
     # Validate required settings
-    if not all([tenant_id, client_id, client_secret, db_host, db_port, db_user, db_password, db_name]):
+    if not all([tenant_id, client_id, client_secret, db_host, db_port, db_user, db_password, db_name, crypto_key]):
         logger.error("Missing required environment variables. Please check your .env file.")
-        logger.error("Required variables: TENANT_ID, CLIENT_ID, CLIENT_SECRET, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME")
+        logger.error("Required variables: TENANT_ID, CLIENT_ID, CLIENT_SECRET, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, CRYPTO_KEY")
         sys.exit(1)
     
     # Initialize password checker
@@ -39,7 +40,8 @@ def main():
         client_id, 
         client_secret,
         expiry_days,
-        warn_days
+        warn_days,
+        crypto_key
     )
     
     # Set force change attribute
