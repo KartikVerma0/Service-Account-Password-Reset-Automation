@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code into the container
 COPY m365_password_reset.py /app/
-COPY .crypto.key /app/
+# COPY .crypto.key /app/
 
 # Expose port if needed (optional, remove if not applicable)
 # EXPOSE 8080
