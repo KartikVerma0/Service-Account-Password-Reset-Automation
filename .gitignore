@@ -1,4 +1,5 @@
 venv
+.venv
 .env
 .crypto.key
 passwords_output.txt
